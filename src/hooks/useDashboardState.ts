@@ -78,6 +78,42 @@ export function useDashboardState() {
     }
 
     loadData();
+
+    // 🔴 REAL-TIME SUBSCRIPTIONS
+    const incidentSubscription = supabase
+      .channel('public:incidents')
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'incidents' }, payload => {
+        const newInc = payload.new;
+        const incident: Incident = {
+          id: newInc.id,
+          type: newInc.type as any,
+          message: newInc.message,
+          location: newInc.location,
+          severity: newInc.severity as any,
+          timestamp: new Date(newInc.created_at)
+        };
+        
+        setIncidents(prev => [incident, ...prev].slice(0, 30));
+        setTimelineEvents(prev => [...prev, incident].sort((a,b) => a.timestamp.getTime() - b.timestamp.getTime()));
+      })
+      .subscribe();
+
+    const inventorySubscription = supabase
+      .channel('public:inventory_items')
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'inventory_items' }, payload => {
+        const updatedItem = payload.new;
+        setInventory(prev => prev.map(item => 
+          item.id === updatedItem.id 
+            ? { ...item, currentStock: updatedItem.current_stock, aiStatus: updatedItem.ai_status as any }
+            : item
+        ));
+      })
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(incidentSubscription);
+      supabase.removeChannel(inventorySubscription);
+    };
   }, []);
 
   const addIncident = useCallback((incident: Omit<Incident, 'id' | 'timestamp'>) => {

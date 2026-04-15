@@ -4,6 +4,7 @@ import multer from 'multer';
 import dotenv from 'dotenv';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { createClient } from '@supabase/supabase-js';
+import { Resend } from 'resend';
 import path from 'path';
 import fs from 'fs';
 
@@ -22,6 +23,8 @@ const supabase = createClient(
   process.env.VITE_SUPABASE_URL || '',
   process.env.VITE_SUPABASE_ANON_KEY || ''
 );
+
+const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
 const SYSTEM_PROMPT = `You are the SousVision Autonomous Auditor — a zero-shot, B2B-grade AI agent 
 engineered for commercial kitchen infrastructure. You operate with the precision 
@@ -47,13 +50,17 @@ DOMAIN 2 — HEALTH & SAFETY:
 DOMAIN 3 — WORKFLOW & COMPLIANCE:
   - Verify staff compliance with PPE (gloves, hairnets, aprons)
   - Detect cross-contamination risks (e.g., raw meat near prep-ready veg)
-  - Analyze station throughput and cleanup cycle status
+
+DOMAIN 4 — FOOD WASTE & SUSTAINABILITY:
+  - Detect discarded edible food, peels, or scraps (e.g., in trash cans or prep stations)
+  - Quantify the visual volume of the waste
+  - Identify the specific ingredient being wasted
 
 OUTPUT PROTOCOL:
 You MUST respond ONLY with a single valid JSON object following this schema:
 {
   "status": "Nominal | Warning | Critical",
-  "category": "Safety | Logistics | Compliance | Efficiency",
+  "category": "Safety | Logistics | Compliance | Efficiency | Waste",
   "detection": "Detailed string describing specifically what was found",
   "urgency_score": 0-10,
   "confidence_percent": 0-100,
@@ -84,7 +91,7 @@ app.post('/api/scan', upload.single('image'), async (req, res) => {
       const name = req.file.originalname.toLowerCase();
       let mock;
       
-      if (name.includes('wet') || name.includes('spill')) {
+      if (name.includes('wet') || name.includes('spill') || name.includes('hazard')) {
         mock = {
           status: "Critical", category: "Safety", zone: "Zone B",
           detection: "Liquid spill detected near prep table.",
@@ -92,10 +99,27 @@ app.post('/api/scan', upload.single('image'), async (req, res) => {
           agent_action: { type: "Alert", description: "Deploy cleanup immediately." },
           dashboard_directive: { accent_color: "red", badge_text: "SPILL DETECTED", trigger_modal: true }
         };
+      } else if (name.includes('waste') || name.includes('scrap') || name.includes('food')) {
+        mock = {
+          status: "Warning", category: "Waste", zone: "Zone C",
+          detection: "High volume of actionable waste detected (Vegetable Scraps).",
+          urgency_score: 5, confidence_percent: 92,
+          agent_action: { type: "Log", description: "Calculating waste offset." },
+          dashboard_directive: { accent_color: "amber", badge_text: "WASTE DETECTED", trigger_modal: false }
+        };
+      } else if (name.includes('empty') || name.includes('stock') || name.includes('less') || name.includes('flour')) {
+        mock = {
+          status: "Warning", category: "Logistics", zone: "Dry Storage",
+          detection: "Critical low stock level detected for All-Purpose Flour.",
+          urgency_score: 8, confidence_percent: 99,
+          agent_action: { type: "Email", description: "Drafting supplier reorder." },
+          inventory_update: [{ item: "All-Purpose Flour", current_stock_percent: 5 }],
+          dashboard_directive: { accent_color: "amber", badge_text: "LOW STOCK", trigger_modal: true }
+        };
       } else {
         mock = {
           status: "Nominal", category: "Efficiency", zone: "Zone A",
-          detection: "Station check complete. No hazards found.",
+          detection: "Station check complete. No anomalies found.",
           urgency_score: 1, confidence_percent: 95,
           agent_action: { type: "Log", description: "Nominal operations." },
           dashboard_directive: { accent_color: "emerald", badge_text: "NOMINAL", trigger_modal: false }
@@ -157,6 +181,97 @@ app.post('/api/scan', upload.single('image'), async (req, res) => {
     console.error('Scan Error:', error);
     res.status(500).json({ error: 'AI Analysis failed', details: error.message });
     if (req.file) fs.unlinkSync(req.file.path);
+  }
+});
+
+app.post('/api/send-email', async (req, res) => {
+  const { to, subject, body, item } = req.body;
+  try {
+    if (resend) {
+      await resend.emails.send({
+        from: 'SousVision AI <onboarding@resend.dev>',
+        to: [to],
+        subject: subject || `Urgent Reorder: ${item?.name}`,
+        text: body,
+      });
+    } else {
+      console.log('RESEND_API_KEY not found. Simulating email dispatch.');
+    }
+
+    // Log the reorder as a logistics event in Supabase
+    if (process.env.VITE_SUPABASE_URL) {
+      await supabase.from('incidents').insert({
+        type: 'logistics',
+        message: `ORDER DISPATCHED: Automated reorder sent for ${item?.name} to ${item?.supplier}`,
+        location: 'System',
+        severity: 'low'
+      });
+    }
+
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/generate-eod', async (req, res) => {
+  try {
+    const managerEmail = req.body.email || 'manager@restaurant.com'; // fallback
+    
+    // Fetch Data from Supabase
+    let incidents = [];
+    let inventory = [];
+    
+    if (process.env.VITE_SUPABASE_URL) {
+      const { data: incData } = await supabase.from('incidents').select('*').order('created_at', { ascending: false }).limit(20);
+      if (incData) incidents = incData;
+      
+      const { data: invData } = await supabase.from('inventory_items').select('*').order('name');
+      if (invData) inventory = invData;
+    }
+
+    const hazardCount = incidents.filter(i => i.type === 'hazard').length;
+    const wasteCount = incidents.filter(i => i.type === 'waste').length;
+    let criticalStock = inventory.filter(i => i.current_stock < 20).map(i => `${i.name} (${i.current_stock}%)`);
+
+    // Draft the email (Mocked structure for speed and reliability, but you could pass this to Gemini)
+    const eodReport = `
+SOUSVISION AI – END OF DAY REPORT
+=================================
+
+EXECUTIVE SUMMARY
+-----------------
+Total Incidents Logged: ${incidents.length}
+Hazards Prevented/Detected: ${hazardCount}
+Waste Events Detected: ${wasteCount}
+
+CRITICAL INVENTORY REPORT
+-------------------------
+The following items require immediate reordering:
+${criticalStock.length > 0 ? criticalStock.join('\n') : 'All vital inventory levels are nominal.'}
+
+CHAOS & INCIDENT LOG (LATEST)
+-----------------------------
+${incidents.slice(0, 5).map(i => `- [${i.severity.toUpperCase()}] ${i.message}`).join('\n')}
+
+System Status: ONLINE. Monitoring overnight protocols.
+`;
+
+    // Send the email via Resend
+    if (resend) {
+      await resend.emails.send({
+        from: 'SousVision AI <onboarding@resend.dev>',
+        to: [managerEmail], 
+        subject: `SousVision Executive EOD Report - ${new Date().toLocaleDateString()}`,
+        text: eodReport,
+      });
+    } else {
+      console.log('EOD Email Draft Generated (Simulation Mode): \n', eodReport);
+    }
+
+    res.json({ success: true, report: eodReport });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 

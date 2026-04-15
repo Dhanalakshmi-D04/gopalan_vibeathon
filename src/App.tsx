@@ -37,6 +37,7 @@ export default function App() {
 
   const [isScanning, setIsScanning] = useState(false);
   const [isWasteScanning, setIsWasteScanning] = useState(false);
+  const [isGeneratingEOD, setIsGeneratingEOD] = useState(false);
   const [showTimeline, setShowTimeline] = useState(false);
   const [notification, setNotification] = useState<string | null>(null);
 
@@ -46,6 +47,24 @@ export default function App() {
   const showSuccessNotification = (msg: string) => {
     setNotification(msg);
     setTimeout(() => setNotification(null), 3000);
+  };
+
+  const handleEOD = async () => {
+    setIsGeneratingEOD(true);
+    try {
+      const res = await fetch('http://localhost:3001/api/generate-eod', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'manager@restaurant.com' }) // Hardcode or prompt for email
+      });
+      const data = await res.json();
+      showSuccessNotification('EOD Report Dispatched to Manager Email');
+    } catch (err) {
+      console.error(err);
+      showSuccessNotification('Failed to generate EOD.');
+    } finally {
+      setIsGeneratingEOD(false);
+    }
   };
 
   const handleScanWaste = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -227,6 +246,15 @@ export default function App() {
           <div className="w-px h-8 bg-gray-800" />
 
           <div className="flex items-center gap-2 flex-shrink-0">
+            {/* EOD SUMMARY BUTTON */}
+            <button
+              onClick={handleEOD}
+              disabled={isGeneratingEOD}
+              className="px-3 py-1.5 rounded bg-emerald-600/20 hover:bg-emerald-600/40 text-emerald-400 border border-emerald-500/30 font-mono text-xs font-bold transition-all disabled:opacity-50 flex items-center gap-2 mr-2"
+            >
+              {isGeneratingEOD ? 'DISPATCHING...' : 'EOD SUMMARY'}
+            </button>
+
             {/* TIMELINE REPLAY BUTTON */}
             <button
               onClick={() => setShowTimeline(true)}
