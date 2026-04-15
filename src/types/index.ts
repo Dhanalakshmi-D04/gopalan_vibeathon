@@ -1,4 +1,4 @@
-export type IncidentType = 'hazard' | 'logistics' | 'compliance';
+export type IncidentType = 'hazard' | 'logistics' | 'compliance' | 'waste';
 export type AIActionStatus = 'Drafting Order' | 'Optimized' | 'Expedite Required';
 export type DashboardMode = 'normal' | 'leak' | 'stockout';
 export type Severity = 'low' | 'medium' | 'high' | 'critical';
@@ -10,6 +10,9 @@ export interface Incident {
   location: string;
   timestamp: Date;
   severity: Severity;
+  relatedImage?: string;
+  ingredient?: string;
+  quantity?: string;
 }
 
 export interface InventoryItem {

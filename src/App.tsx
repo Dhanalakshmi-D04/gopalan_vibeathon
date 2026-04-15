@@ -8,6 +8,14 @@ import IncidentStream from './components/IncidentStream';
 import InventoryMatrix from './components/InventoryMatrix';
 import ReorderModal from './components/ReorderModal';
 import SimulationPanel from './components/SimulationPanel';
+import TimelineReplay from './components/TimelineReplay';
+
+// Example waste mapping
+const WASTE_DATABASE = [
+  { keywords: ['tomato', 'red', 'vegetable'], ingredient: 'Tomato', quantity: '100g' },
+  { keywords: ['onion', 'peel', 'white'], ingredient: 'Onion', quantity: '150g' },
+  { keywords: ['lettuce', 'leaf', 'green'], ingredient: 'Lettuce', quantity: '80g' },
+];
 
 export default function App() {
   const {
@@ -23,36 +31,107 @@ export default function App() {
     allClear,
     addIncident,
     setMode,
+    setVitals,
+    timelineEvents,
   } = useDashboardState();
 
   const [isScanning, setIsScanning] = useState(false);
+  const [isWasteScanning, setIsWasteScanning] = useState(false);
+  const [showTimeline, setShowTimeline] = useState(false);
+  const [notification, setNotification] = useState<string | null>(null);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const wasteInputRef = useRef<HTMLInputElement>(null);
+
+  const showSuccessNotification = (msg: string) => {
+    setNotification(msg);
+    setTimeout(() => setNotification(null), 3000);
+  };
+
+  const handleScanWaste = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsWasteScanning(true);
+    const imageUrl = URL.createObjectURL(file);
+
+    try {
+      const formData = new FormData();
+      formData.append('image', file);
+
+      // We mark this as a waste scan in some way or let the AI decide
+      const res = await fetch('http://localhost:3001/api/scan', {
+        method: 'POST',
+        body: formData,
+      });
+      const data = await res.json();
+
+      addIncident({
+        type: 'waste',
+        message: data.detection,
+        location: data.zone || 'Prep Station',
+        severity: 'medium',
+        ingredient: data.category === 'Waste' ? data.detection.split(' ')[0] : 'Vegetables', // dynamic-ish
+        quantity: '150g',
+        relatedImage: imageUrl,
+      });
+      
+      setVitals(prev => ({
+        ...prev,
+        dailyWasteSaved: prev.dailyWasteSaved + 0.5,
+      }));
+
+      showSuccessNotification("Waste detected and logged successfully.");
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsWasteScanning(false);
+    }
+  };
 
   const handleScanFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
     setIsScanning(true);
-    // Simulate 2s processing
-    await new Promise(r => setTimeout(r, 2000));
-    setIsScanning(false);
+    const imageUrl = URL.createObjectURL(file);
 
-    const name = file.name.toLowerCase();
-    
-    if (name.includes('wet_floor') || name.includes('spill')) {
-      simulateLeak();
-    } else if (name.includes('flour') || name.includes('empty')) {
-      simulateStockOut();
-    } else if (name.includes('glove') || name.includes('chef')) {
-      setMode('normal');
-      addIncident({
-        type: 'compliance',
-        message: 'Non-compliance: Cross-contamination risk at Station 1 (No Gloves)',
-        location: 'Zone C',
-        severity: 'high',
+    try {
+      const formData = new FormData();
+      formData.append('image', file);
+
+      const res = await fetch('http://localhost:3001/api/scan', {
+        method: 'POST',
+        body: formData,
       });
-    } else {
-      allClear();
+      const data = await res.json();
+
+      if (data.status === 'Critical') {
+        setMode('leak');
+      } else if (data.status === 'Warning') {
+        setMode('stockout');
+      }
+
+      addIncident({
+        type: data.category.toLowerCase() === 'safety' ? 'hazard' : 
+              data.category.toLowerCase() === 'logistics' ? 'logistics' : 'compliance',
+        message: data.detection,
+        location: data.zone,
+        severity: data.status.toLowerCase() === 'critical' ? 'critical' : 
+                 data.status.toLowerCase() === 'warning' ? 'high' : 'medium',
+        relatedImage: imageUrl
+      });
+
+      if (data.inventory_update) {
+        // Simple mock inventory update loop
+      }
+
+      showSuccessNotification(data.badge_text || "Audit Complete");
+    } catch (err) {
+      console.error(err);
+      allClear(); // reset on error
+    } finally {
+      setIsScanning(false);
     }
   };
 
@@ -64,6 +143,19 @@ export default function App() {
       className="min-h-screen w-full flex flex-col overflow-hidden"
       style={{ background: '#0a0a0a', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace' }}
     >
+      {notification && (
+        <motion.div
+           initial={{ opacity: 0, y: -20, x: '-50%' }}
+           animate={{ opacity: 1, y: 0, x: '-50%' }}
+           exit={{ opacity: 0, y: -20, x: '-50%' }}
+           className="fixed top-20 left-1/2 z-50 px-6 py-3 rounded-xl border font-mono text-sm shadow-xl font-bold flex items-center gap-2"
+           style={{ background: '#8b5cf610', borderColor: '#8b5cf650', color: '#8b5cf6', backdropFilter: 'blur(12px)' }}
+        >
+          <div className="w-2 h-2 rounded-full bg-purple-500 animate-pulse" />
+          {notification}
+        </motion.div>
+      )}
+
       {mode === 'leak' && (
         <motion.div
           className="fixed inset-0 pointer-events-none z-30"
@@ -135,6 +227,39 @@ export default function App() {
           <div className="w-px h-8 bg-gray-800" />
 
           <div className="flex items-center gap-2 flex-shrink-0">
+            {/* TIMELINE REPLAY BUTTON */}
+            <button
+              onClick={() => setShowTimeline(true)}
+              className="px-3 py-1.5 rounded bg-blue-600/20 hover:bg-blue-600/40 text-blue-400 border border-blue-500/30 font-mono text-xs font-bold transition-all flex items-center gap-2 mr-2"
+            >
+              TIMELINE REPLAY
+            </button>
+
+            {/* WASTE DETECT BUTTON */}
+            <input 
+              type="file" 
+              ref={wasteInputRef} 
+              onChange={handleScanWaste} 
+              className="hidden" 
+              accept="image/*" 
+            />
+            <button
+              onClick={() => wasteInputRef.current?.click()}
+              disabled={isWasteScanning}
+              className="px-3 py-1.5 rounded text-white font-mono text-xs font-bold transition-all disabled:opacity-50 flex items-center gap-2 mr-2"
+              style={{ background: isWasteScanning ? '#4b5563' : '#8b5cf6', color: '#fff' }}
+            >
+              {isWasteScanning ? (
+                <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}>
+                  <Cpu size={14} />
+                </motion.div>
+              ) : (
+                <Camera size={14} />
+              )}
+              {isWasteScanning ? 'SCANNING...' : 'SCAN WASTE IMAGE'}
+            </button>
+
+            {/* NOMINAL SCAN FRAME BUTTON */}
             <input 
               type="file" 
               ref={fileInputRef} 
@@ -145,8 +270,8 @@ export default function App() {
             <button
               onClick={() => fileInputRef.current?.click()}
               disabled={isScanning}
-              className="px-3 py-1.5 rounded bg-indigo-600 hover:bg-indigo-500 text-white font-mono text-xs font-bold transition-all disabled:opacity-50 flex items-center gap-2 mr-4"
-              style={{ background: isScanning ? '#4b5563' : '#10b981', color: '#000' }}
+              className="px-3 py-1.5 rounded hover:opacity-80 text-white font-mono text-xs font-bold transition-all disabled:opacity-50 flex items-center gap-2 mr-4 shadow-lg"
+              style={{ background: isScanning ? '#4b5563' : accentColor, color: '#000' }}
             >
               {isScanning ? (
                 <motion.div animate={{ rotate: 360 }} transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}>
@@ -205,6 +330,13 @@ export default function App() {
       </main>
 
       <ReorderModal item={reorderItem} onClose={() => setReorderItem(null)} />
+
+      {showTimeline && (
+        <TimelineReplay 
+          events={timelineEvents} 
+          onClose={() => setShowTimeline(false)} 
+        />
+      )}
 
       <SimulationPanel
         mode={mode}

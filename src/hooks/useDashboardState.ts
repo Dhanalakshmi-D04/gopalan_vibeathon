@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react';
+import { supabase } from '../lib/supabase';
 import { DashboardMode, Incident, InventoryItem, VitalStats, CameraFeed } from '../types';
-import { INITIAL_INCIDENTS, INITIAL_INVENTORY, INITIAL_CAMERA_FEEDS } from '../data/mockData';
+import { INITIAL_CAMERA_FEEDS } from '../data/mockData';
 
 const NORMAL_VITALS: VitalStats = {
   activeRisks: 2,
@@ -25,12 +26,59 @@ const STOCKOUT_VITALS: VitalStats = {
 
 export function useDashboardState() {
   const [mode, setMode] = useState<DashboardMode>('normal');
-  const [incidents, setIncidents] = useState<Incident[]>(INITIAL_INCIDENTS);
-  const [inventory, setInventory] = useState<InventoryItem[]>(INITIAL_INVENTORY);
+  const [incidents, setIncidents] = useState<Incident[]>([]);
+  const [timelineEvents, setTimelineEvents] = useState<Incident[]>([]);
+  const [inventory, setInventory] = useState<InventoryItem[]>([]);
   const [vitals, setVitals] = useState<VitalStats>(NORMAL_VITALS);
   const [cameraFeeds, setCameraFeeds] = useState<CameraFeed[]>(INITIAL_CAMERA_FEEDS);
   const [reorderItem, setReorderItem] = useState<InventoryItem | null>(null);
   const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // FETCH INITIAL DATA FROM SUPABASE
+  useEffect(() => {
+    async function loadData() {
+      // Load Inventory
+      const { data: invData } = await supabase
+        .from('inventory_items')
+        .select('*')
+        .order('name');
+      
+      if (invData) {
+        setInventory(invData.map(item => ({
+          id: item.id,
+          name: item.name,
+          category: item.category,
+          currentStock: item.current_stock,
+          unit: item.unit,
+          supplier: item.supplier,
+          supplierEmail: item.supplier_email,
+          aiStatus: item.ai_status as any
+        })));
+      }
+
+      // Load Incidents
+      const { data: incData } = await supabase
+        .from('incidents')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .limit(30);
+
+      if (incData) {
+        const mappedIncidents: Incident[] = incData.map(inc => ({
+          id: inc.id,
+          type: inc.type as any,
+          message: inc.message,
+          location: inc.location,
+          severity: inc.severity as any,
+          timestamp: new Date(inc.created_at)
+        }));
+        setIncidents(mappedIncidents);
+        setTimelineEvents([...mappedIncidents].sort((a,b) => a.timestamp.getTime() - b.timestamp.getTime()));
+      }
+    }
+
+    loadData();
+  }, []);
 
   const addIncident = useCallback((incident: Omit<Incident, 'id' | 'timestamp'>) => {
     const newIncident: Incident = {
@@ -39,6 +87,7 @@ export function useDashboardState() {
       timestamp: new Date(),
     };
     setIncidents(prev => [newIncident, ...prev].slice(0, 30));
+    setTimelineEvents(prev => [...prev, newIncident].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime()));
   }, []);
 
   const simulateLeak = useCallback(() => {
@@ -141,5 +190,7 @@ export function useDashboardState() {
     simulateLeak,
     simulateStockOut,
     allClear,
+    timelineEvents,
+    setTimelineEvents,
   };
 }

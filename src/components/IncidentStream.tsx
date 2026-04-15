@@ -1,6 +1,6 @@
 import { useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { AlertTriangle, Package, Shield, Activity } from 'lucide-react';
+import { AlertTriangle, Package, Shield, Activity, Trash2 } from 'lucide-react';
 import { Incident, IncidentType, Severity } from '../types';
 
 interface Props {
@@ -25,6 +25,12 @@ const TYPE_CONFIG: Record<IncidentType, { icon: React.ReactNode; color: string; 
     color: '#10b981',
     bg: '#10b98115',
     label: 'COMPLIANCE',
+  },
+  waste: {
+    icon: <Trash2 size={13} />,
+    color: '#8b5cf6',
+    bg: '#8b5cf615',
+    label: 'WASTE',
   },
 };
 
@@ -91,6 +97,12 @@ function IncidentRow({ incident }: { incident: Incident }) {
             )}
           </div>
           <p className="font-mono text-xs text-gray-300 leading-tight break-words">{incident.message}</p>
+          {incident.type === 'waste' && incident.ingredient && (
+            <div className="mt-1 font-mono text-[10px] text-gray-400">
+              <span className="opacity-70">Ingredient:</span> {incident.ingredient} <br />
+              <span className="opacity-70">Est. Quantity:</span> {incident.quantity}
+            </div>
+          )}
           <div className="flex items-center gap-2 mt-1">
             <motion.div
               className="w-1.5 h-1.5 rounded-full flex-shrink-0"
