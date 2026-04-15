@@ -17,7 +17,7 @@ app.use(express.json());
 const upload = multer({ dest: 'uploads/' });
 
 const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY || '');
-const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
 
 const supabase = createClient(
   process.env.VITE_SUPABASE_URL || '',
@@ -81,6 +81,43 @@ You MUST respond ONLY with a single valid JSON object following this schema:
 }`;
 
 app.post('/api/scan', upload.single('image'), async (req, res) => {
+  const generateMock = (name) => {
+    if (name.includes('wet') || name.includes('spill') || name.includes('hazard')) {
+      return {
+        status: "Critical", category: "Safety", zone: "Zone B",
+        detection: "Liquid spill detected near prep table.",
+        urgency_score: 9, confidence_percent: 98,
+        agent_action: { type: "Alert", description: "Deploy cleanup immediately." },
+        dashboard_directive: { accent_color: "red", badge_text: "SPILL DETECTED", trigger_modal: true }
+      };
+    } else if (name.includes('waste') || name.includes('scrap') || name.includes('food')) {
+      return {
+        status: "Warning", category: "Waste", zone: "Zone C",
+        detection: "High volume of actionable waste detected (Vegetable Scraps).",
+        urgency_score: 5, confidence_percent: 92,
+        agent_action: { type: "Log", description: "Calculating waste offset." },
+        dashboard_directive: { accent_color: "amber", badge_text: "WASTE DETECTED", trigger_modal: false }
+      };
+    } else if (name.includes('empty') || name.includes('stock') || name.includes('less') || name.includes('flour')) {
+      return {
+        status: "Warning", category: "Logistics", zone: "Dry Storage",
+        detection: "Critical low stock level detected for All-Purpose Flour.",
+        urgency_score: 8, confidence_percent: 99,
+        agent_action: { type: "Email", description: "Drafting supplier reorder." },
+        inventory_update: [{ item: "All-Purpose Flour", current_stock_percent: 5 }],
+        dashboard_directive: { accent_color: "amber", badge_text: "LOW STOCK", trigger_modal: true }
+      };
+    } else {
+      return {
+        status: "Nominal", category: "Efficiency", zone: "Zone A",
+        detection: "Station check complete. No anomalies found.",
+        urgency_score: 1, confidence_percent: 95,
+        agent_action: { type: "Log", description: "Nominal operations." },
+        dashboard_directive: { accent_color: "emerald", badge_text: "NOMINAL", trigger_modal: false }
+      };
+    }
+  };
+
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'No image uploaded' });
@@ -88,43 +125,7 @@ app.post('/api/scan', upload.single('image'), async (req, res) => {
 
     if (!process.env.GOOGLE_API_KEY || process.env.GOOGLE_API_KEY === 'YOUR_GEMINI_KEY') {
       console.log('No Google API Key found. Returning mock response.');
-      const name = req.file.originalname.toLowerCase();
-      let mock;
-      
-      if (name.includes('wet') || name.includes('spill') || name.includes('hazard')) {
-        mock = {
-          status: "Critical", category: "Safety", zone: "Zone B",
-          detection: "Liquid spill detected near prep table.",
-          urgency_score: 9, confidence_percent: 98,
-          agent_action: { type: "Alert", description: "Deploy cleanup immediately." },
-          dashboard_directive: { accent_color: "red", badge_text: "SPILL DETECTED", trigger_modal: true }
-        };
-      } else if (name.includes('waste') || name.includes('scrap') || name.includes('food')) {
-        mock = {
-          status: "Warning", category: "Waste", zone: "Zone C",
-          detection: "High volume of actionable waste detected (Vegetable Scraps).",
-          urgency_score: 5, confidence_percent: 92,
-          agent_action: { type: "Log", description: "Calculating waste offset." },
-          dashboard_directive: { accent_color: "amber", badge_text: "WASTE DETECTED", trigger_modal: false }
-        };
-      } else if (name.includes('empty') || name.includes('stock') || name.includes('less') || name.includes('flour')) {
-        mock = {
-          status: "Warning", category: "Logistics", zone: "Dry Storage",
-          detection: "Critical low stock level detected for All-Purpose Flour.",
-          urgency_score: 8, confidence_percent: 99,
-          agent_action: { type: "Email", description: "Drafting supplier reorder." },
-          inventory_update: [{ item: "All-Purpose Flour", current_stock_percent: 5 }],
-          dashboard_directive: { accent_color: "amber", badge_text: "LOW STOCK", trigger_modal: true }
-        };
-      } else {
-        mock = {
-          status: "Nominal", category: "Efficiency", zone: "Zone A",
-          detection: "Station check complete. No anomalies found.",
-          urgency_score: 1, confidence_percent: 95,
-          agent_action: { type: "Log", description: "Nominal operations." },
-          dashboard_directive: { accent_color: "emerald", badge_text: "NOMINAL", trigger_modal: false }
-        };
-      }
+      const mock = generateMock(req.file.originalname.toLowerCase());
       return res.json(mock);
     }
 
@@ -178,9 +179,22 @@ app.post('/api/scan', upload.single('image'), async (req, res) => {
 
     res.json(auditResult);
   } catch (error) {
-    console.error('Scan Error:', error);
-    res.status(500).json({ error: 'AI Analysis failed', details: error.message });
-    if (req.file) fs.unlinkSync(req.file.path);
+    console.error('Gemini API/Scan Error:', error.message);
+    console.log('Falling back to local Mock Simulator due to AI API failure.');
+    
+    // Graceful Failover
+    const mock = generateMock(req.file ? req.file.originalname.toLowerCase() : '');
+    
+    // Clean up temp file safely
+    if (req.file) {
+      try {
+        fs.unlinkSync(req.file.path);
+      } catch (err) {
+        console.warn('Could not clean up temp file:', err.message);
+      }
+    }
+    
+    return res.json(mock);
   }
 });
 

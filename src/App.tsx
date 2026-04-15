@@ -52,10 +52,10 @@ export default function App() {
   const handleEOD = async () => {
     setIsGeneratingEOD(true);
     try {
-      const res = await fetch('http://localhost:3001/api/generate-eod', {
+      const res = await fetch('https://legal-mammals-wear.loca.lt/api/generate-eod', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: 'manager@restaurant.com' }) // Hardcode or prompt for email
+        body: JSON.stringify({ email: 'sinchanasabha983@gmail.com' }) // Verified Manager Email
       });
       const data = await res.json();
       showSuccessNotification('EOD Report Dispatched to Manager Email');
@@ -79,7 +79,7 @@ export default function App() {
       formData.append('image', file);
 
       // We mark this as a waste scan in some way or let the AI decide
-      const res = await fetch('http://localhost:3001/api/scan', {
+      const res = await fetch('https://legal-mammals-wear.loca.lt/api/scan', {
         method: 'POST',
         body: formData,
       });
@@ -119,7 +119,7 @@ export default function App() {
       const formData = new FormData();
       formData.append('image', file);
 
-      const res = await fetch('http://localhost:3001/api/scan', {
+      const res = await fetch('https://legal-mammals-wear.loca.lt/api/scan', {
         method: 'POST',
         body: formData,
       });

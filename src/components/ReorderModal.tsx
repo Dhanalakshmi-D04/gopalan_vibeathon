@@ -39,7 +39,7 @@ export default function ReorderModal({ item, onClose }: Props) {
 
   const handleSend = async () => {
     try {
-      await fetch('http://localhost:3001/api/send-email', {
+      await fetch('https://legal-mammals-wear.loca.lt/api/send-email', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
